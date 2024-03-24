@@ -1,0 +1,4 @@
+﻿  源.cpp
+E:\parallel\parallel\源.cpp(18,26): warning C4244: “=”: 从“double”转换到“float”，可能丢失数据
+E:\parallel\parallel\源.cpp(22,22): warning C4244: “=”: 从“double”转换到“float”，可能丢失数据
+  parallel.vcxproj -> E:\parallel\Debug\parallel.exe
