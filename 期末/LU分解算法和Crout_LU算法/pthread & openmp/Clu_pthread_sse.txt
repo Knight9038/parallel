@@ -1,0 +1,130 @@
+#include <iostream>
+#include <vector>
+#include <stdlib.h>
+#include <chrono>
+#include <pthread.h>
+#include <immintrin.h> // Include SSE intrinsics header
+using namespace std;
+
+int N = 2048;
+const int NUM_THREADS = 8;
+
+vector<vector<double>> m(N, vector<double>(N, 0.0)); // Global matrix m
+vector<vector<double>> L(N, vector<double>(N, 0.0)); // Lower matrix
+vector<vector<double>> U(N, vector<double>(N, 0.0)); // Upper matrix
+
+void printMatrix(const vector<vector<double>>& mat) {
+    for (const auto& row : mat) {
+        for (double val : row) {
+            cout << val << " ";
+        }
+        cout << endl;
+    }
+}
+
+void m_reset() {
+    srand(time(nullptr));
+
+    for (int i = 0; i < N; i++) {
+        m[i][i] = 1.0;
+
+        for (int j = i + 1; j < N; j++) {
+            m[i][j] = rand() % RAND_MAX + 2;
+            m[j][i] = rand() % RAND_MAX + 2;
+        }
+    }
+}
+
+// Struct to hold thread arguments
+struct ThreadArgs {
+    int startRow;
+    int endRow;
+};
+
+// LU decomposition function for each thread with SSE4 optimization
+void* threadCroutLuDecomposition(void* args) {
+    ThreadArgs* threadArgs = (ThreadArgs*)args;
+    int startRow = threadArgs->startRow;
+    int endRow = threadArgs->endRow;
+
+    for (int i = startRow; i < endRow; i++) {
+        L[i][i] = 1.0;
+
+        for (int j = i; j < N; j++) {
+            __m256d sum = _mm256_setzero_pd(); // Initialize sum to zero using SSE4
+
+            for (int k = 0; k < i; k += 4) { // Process 4 elements at a time with SSE4
+                __m256d L_val = _mm256_loadu_pd(&L[i][k]);
+                __m256d U_val = _mm256_loadu_pd(&U[k][j]);
+                sum = _mm256_add_pd(sum, _mm256_mul_pd(L_val, U_val));
+            }
+
+            double temp[4]; // Temporary array to store sum values
+            _mm256_storeu_pd(temp, sum);
+            double final_sum = temp[0] + temp[1] + temp[2] + temp[3]; // Accumulate sum from vector
+
+            U[i][j] = m[i][j] - final_sum;
+        }
+
+        for (int j = i + 1; j < N; j++) {
+            __m256d sum = _mm256_setzero_pd(); // Initialize sum to zero using SSE4
+
+            for (int k = 0; k < i; k += 4) { // Process 4 elements at a time with SSE4
+                __m256d L_val = _mm256_loadu_pd(&L[j][k]);
+                __m256d U_val = _mm256_loadu_pd(&U[k][i]);
+                sum = _mm256_add_pd(sum, _mm256_mul_pd(L_val, U_val));
+            }
+
+            double temp[4]; // Temporary array to store sum values
+            _mm256_storeu_pd(temp, sum);
+            double final_sum = temp[0] + temp[1] + temp[2] + temp[3]; // Accumulate sum from vector
+
+            L[j][i] = (m[j][i] - final_sum) / U[i][i];
+        }
+    }
+
+    pthread_exit(NULL);
+}
+
+int main() {
+    m_reset();
+    int iterations = 1;
+
+    using namespace std::chrono;
+    double count = 0;
+
+    pthread_t threads[NUM_THREADS];
+    ThreadArgs threadArgs[NUM_THREADS];
+
+    for (int i = 0; i < iterations; ++i)
+    {
+        m_reset();
+        auto start = steady_clock::now();
+
+        // Create threads
+        for (int t = 0; t < NUM_THREADS; ++t) {
+            int chunkSize = N / NUM_THREADS;
+            threadArgs[t].startRow = t * chunkSize;
+            threadArgs[t].endRow = (t + 1) * chunkSize;
+            pthread_create(&threads[t], NULL, threadCroutLuDecomposition, (void*)&threadArgs[t]);
+        }
+
+        // Join threads
+        for (int t = 0; t < NUM_THREADS; ++t) {
+            pthread_join(threads[t], NULL);
+        }
+
+        auto end = steady_clock::now();
+        duration<double, milli> duration = end - start;
+        count += duration.count();
+    }
+    cout << "Crout-LU with " << NUM_THREADS << " threads: " << count << "ms" << endl;
+
+    /*cout << "Lower triangular matrix L:" << endl;
+    printMatrix(L);
+
+    cout << "Upper triangular matrix U:" << endl;
+    printMatrix(U);*/
+
+    return 0;
+}
